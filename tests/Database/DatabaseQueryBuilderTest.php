@@ -135,6 +135,27 @@ class DatabaseQueryBuilderTest extends PHPUnit_Framework_TestCase
         $this->assertEquals('select * from "users" where "email" = ?', $builder->toSql());
     }
 
+    public function testWhenCallbackWithDefault()
+    {
+        $callback = function ($query) {
+            return $query->where('id', '=', 1);
+        };
+
+        $default = function ($query) {
+            return $query->where('id', '=', 2);
+        };
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->when(true, $callback, $default)->where('email', 'foo');
+        $this->assertEquals('select * from "users" where "id" = ? and "email" = ?', $builder->toSql());
+        $this->assertEquals([0 => 1, 1 => 'foo'], $builder->getBindings());
+
+        $builder = $this->getBuilder();
+        $builder->select('*')->from('users')->when(false, $callback, $default)->where('email', 'foo');
+        $this->assertEquals('select * from "users" where "id" = ? and "email" = ?', $builder->toSql());
+        $this->assertEquals([0 => 2, 1 => 'foo'], $builder->getBindings());
+    }
+
     public function testBasicWheres()
     {
         $builder = $this->getBuilder();
@@ -1265,7 +1286,7 @@ class DatabaseQueryBuilderTest extends PHPUnit_Framework_TestCase
             m::mock('Illuminate\Database\Query\Processors\Processor'),
         ]);
 
-        $builder->shouldReceive('where')->twice()->with(['email' => 'foo'])->andReturn(m::self());
+        $builder->shouldReceive('where')->once()->with(['email' => 'foo'])->andReturn(m::self());
         $builder->shouldReceive('exists')->once()->andReturn(true);
         $builder->shouldReceive('take')->andReturnSelf();
         $builder->shouldReceive('update')->once()->with(['name' => 'bar'])->andReturn(1);
@@ -1364,10 +1385,17 @@ class DatabaseQueryBuilderTest extends PHPUnit_Framework_TestCase
                         'update `users` set `options` = json_set(`options`, "$.enable", false), `updated_at` = ? where `id` = ?',
                         ['2015-05-26 22:02:06', 0]
                     );
-
         $builder = new Builder($connection, $grammar, $processor);
+        $builder->from('users')->where('id', '=', 0)->update(['options->enable' => false, 'updated_at' => '2015-05-26 22:02:06']);
 
-        $result = $builder->from('users')->where('id', '=', 0)->update(['options->enable' => false, 'updated_at' => '2015-05-26 22:02:06']);
+        $connection->shouldReceive('update')
+            ->once()
+            ->with(
+                'update `users` set `options` = json_set(`options`, "$.size", 45), `updated_at` = ? where `id` = ?',
+                ['2015-05-26 22:02:06', 0]
+            );
+        $builder = new Builder($connection, $grammar, $processor);
+        $builder->from('users')->where('id', '=', 0)->update(['options->size' => 45, 'updated_at' => '2015-05-26 22:02:06']);
     }
 
     public function testMySqlWrappingJsonWithString()
@@ -1706,18 +1734,34 @@ class DatabaseQueryBuilderTest extends PHPUnit_Framework_TestCase
         $this->assertEquals('select * from [users](1,2)', $builder->toSql());
     }
 
-    public function testChunkPaginatesUsingId()
+    public function testChunkPaginatesUsingIdWithLastChunkComplete()
     {
         $builder = $this->getMockQueryBuilder();
 
         $builder->shouldReceive('forPageAfterId')->once()->with(2, 0, 'someIdField')->andReturn($builder);
         $builder->shouldReceive('forPageAfterId')->once()->with(2, 2, 'someIdField')->andReturn($builder);
-        $builder->shouldReceive('forPageAfterId')->once()->with(2, 10, 'someIdField')->andReturn($builder);
+        $builder->shouldReceive('forPageAfterId')->once()->with(2, 11, 'someIdField')->andReturn($builder);
 
         $builder->shouldReceive('get')->times(3)->andReturn(
             collect([(object) ['someIdField' => 1], (object) ['someIdField' => 2]]),
-            collect([(object) ['someIdField' => 10]]),
+            collect([(object) ['someIdField' => 10], (object) ['someIdField' => 11]]),
             collect([])
+        );
+
+        $builder->chunkById(2, function ($results) {
+        }, 'someIdField');
+    }
+
+    public function testChunkPaginatesUsingIdWithLastChunkPartial()
+    {
+        $builder = $this->getMockQueryBuilder();
+
+        $builder->shouldReceive('forPageAfterId')->once()->with(2, 0, 'someIdField')->andReturn($builder);
+        $builder->shouldReceive('forPageAfterId')->once()->with(2, 2, 'someIdField')->andReturn($builder);
+
+        $builder->shouldReceive('get')->times(2)->andReturn(
+            collect([(object) ['someIdField' => 1], (object) ['someIdField' => 2]]),
+            collect([(object) ['someIdField' => 10]])
         );
 
         $builder->chunkById(2, function ($results) {

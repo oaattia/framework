@@ -347,7 +347,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      */
     public static function addGlobalScope($scope, Closure $implementation = null)
     {
-        if (is_string($scope) && $implementation !== null) {
+        if (is_string($scope) && ! is_null($implementation)) {
             return static::$globalScopes[static::class][$scope] = $implementation;
         }
 
@@ -636,7 +636,7 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      * Reload a fresh model instance from the database.
      *
      * @param  array|string  $with
-     * @return $this|null
+     * @return static|null
      */
     public function fresh($with = [])
     {
@@ -805,10 +805,10 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
         if (is_null($name)) {
             list($current, $caller) = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
 
-            $name = Str::snake($caller['function']);
+            $name = $caller['function'];
         }
 
-        list($type, $id) = $this->getMorphs($name, $type, $id);
+        list($type, $id) = $this->getMorphs(Str::snake($name), $type, $id);
 
         // If the type value is null it is probably safe to assume we're eager loading
         // the relationship. In this case we'll just pass in a dummy query where we
@@ -2596,8 +2596,16 @@ abstract class Model implements ArrayAccess, Arrayable, Jsonable, JsonSerializab
      */
     public function getAttribute($key)
     {
+        if (! $key) {
+            return;
+        }
+
         if (array_key_exists($key, $this->attributes) || $this->hasGetMutator($key)) {
             return $this->getAttributeValue($key);
+        }
+
+        if (method_exists(self::class, $key)) {
+            return;
         }
 
         return $this->getRelationValue($key);
